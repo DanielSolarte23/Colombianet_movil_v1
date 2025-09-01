@@ -502,7 +502,7 @@ class EntregaCard extends StatelessWidget {
                   onPressed:
                       entrega.estado.toLowerCase() == 'pendiente' ||
                           entrega.estado.toLowerCase() ==
-                              'parcialmente_devuelta'
+                              'parcialmente_devuelta' || entrega.estado.toLowerCase() == 'parcialmente_legalizada'
                       ? () {
                           Navigator.push(
                             context,

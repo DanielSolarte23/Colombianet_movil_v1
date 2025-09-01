@@ -16,10 +16,8 @@ class _ProductSearchViewState extends State<ProductSearchView> {
   Timer? _debounceTimer;
 
   List<dynamic> _searchResults = [];
-  List<dynamic> _suggestions = [];
   bool _isLoading = false;
   bool _showResults = false;
-  bool _showSuggestions = false;
   Map<String, dynamic>? _statistics;
   dynamic _selectedProduct;
 
@@ -35,7 +33,6 @@ class _ProductSearchViewState extends State<ProductSearchView> {
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
-    _focusNode.addListener(_onFocusChanged);
   }
 
   @override
@@ -51,54 +48,21 @@ class _ProductSearchViewState extends State<ProductSearchView> {
 
     if (query.isEmpty) {
       setState(() {
-        _suggestions.clear();
         _searchResults.clear();
-        _showSuggestions = false;
         _showResults = false;
+        _statistics = null;
       });
       return;
     }
 
+    // Cancelar timer anterior si existe
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
-      if (query.length >= 2) {
-        _getSuggestions(query);
-      }
-    });
-  }
-
-  void _onFocusChanged() {
-    if (!_focusNode.hasFocus) {
-      // Pequeño delay para permitir clicks en los resultados
-      Timer(const Duration(milliseconds: 150), () {
-        setState(() {
-          _showResults = false;
-          _showSuggestions = false;
-        });
+    
+    // Solo hacer búsqueda automática si hay al menos 3 caracteres
+    if (query.length >= 3) {
+      _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+        _performSearch(query);
       });
-    }
-  }
-
-  Future<void> _getSuggestions(String query) async {
-    try {
-      final uri = Uri.parse(
-        'http://172.16.110.74:3004/api/productos/sugerencias',
-      ).replace(queryParameters: {'q': query, 'limite': '5'});
-
-      final response = await http.get(uri);
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['success']) {
-          setState(() {
-            _suggestions = data['data'];
-            _showSuggestions = true;
-            _showResults = false;
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint('Error obteniendo sugerencias: $e');
     }
   }
 
@@ -107,20 +71,19 @@ class _ProductSearchViewState extends State<ProductSearchView> {
 
     setState(() {
       _isLoading = true;
-      _showSuggestions = false;
+      _showResults = false;
     });
 
     try {
-      final uri =
-          Uri.parse(
-            'http://172.16.110.74:3004/api/productos/busqueda-rapida',
-          ).replace(
-            queryParameters: {
-              'q': query,
-              'limite': '10',
-              'incluirUnidades': 'true',
-            },
-          );
+      final uri = Uri.parse(
+        'http://172.16.110.74:3004/api/productos/busqueda-rapida',
+      ).replace(
+        queryParameters: {
+          'q': query.trim(),
+          'limite': '10',
+          'incluirUnidades': 'true',
+        },
+      );
 
       final response = await http.get(uri);
 
@@ -128,14 +91,31 @@ class _ProductSearchViewState extends State<ProductSearchView> {
         final data = json.decode(response.body);
         if (data['success']) {
           setState(() {
-            _searchResults = data['data'];
+            _searchResults = data['data'] ?? [];
             _statistics = data['estadisticas'];
             _showResults = true;
           });
+        } else {
+          setState(() {
+            _searchResults = [];
+            _statistics = null;
+            _showResults = true;
+          });
         }
+      } else {
+        setState(() {
+          _searchResults = [];
+          _statistics = null;
+          _showResults = true;
+        });
       }
     } catch (e) {
       debugPrint('Error realizando búsqueda: $e');
+      setState(() {
+        _searchResults = [];
+        _statistics = null;
+        _showResults = true;
+      });
     } finally {
       setState(() {
         _isLoading = false;
@@ -143,28 +123,16 @@ class _ProductSearchViewState extends State<ProductSearchView> {
     }
   }
 
-  void _selectSuggestion(Map<String, dynamic> suggestion) {
-    _searchController.text = suggestion['valor'];
-    setState(() {
-      _showSuggestions = false;
-    });
-    _performSearch(suggestion['valor']);
-  }
-
   void _selectProduct(dynamic product) {
     setState(() {
       _selectedProduct = product;
-      _showResults = false;
-      _showSuggestions = false;
     });
   }
 
   void _clearSearch() {
     _searchController.clear();
     setState(() {
-      _suggestions.clear();
       _searchResults.clear();
-      _showSuggestions = false;
       _showResults = false;
       _statistics = null;
     });
@@ -188,7 +156,11 @@ class _ProductSearchViewState extends State<ProductSearchView> {
       child: TextField(
         controller: _searchController,
         focusNode: _focusNode,
-        onSubmitted: _performSearch,
+        onSubmitted: (query) {
+          if (query.isNotEmpty) {
+            _performSearch(query);
+          }
+        },
         decoration: InputDecoration(
           hintText: 'Buscar por código, descripción, marca, modelo o serial...',
           hintStyle: const TextStyle(color: _gray400),
@@ -238,75 +210,6 @@ class _ProductSearchViewState extends State<ProductSearchView> {
           ),
           SizedBox(width: 12),
           Text('Buscando...', style: TextStyle(color: _gray600)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSuggestions() {
-    if (!_showSuggestions || _suggestions.isEmpty || _isLoading) {
-      return const SizedBox.shrink();
-    }
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: _slate900,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: Text(
-              'Sugerencias',
-              style: TextStyle(
-                color: _gray400,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          ..._suggestions
-              .map(
-                (suggestion) => InkWell(
-                  onTap: () => _selectSuggestion(suggestion),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          _getIconForType(suggestion['tipo']),
-                          size: 16,
-                          color: _gray400,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            suggestion['valor'],
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          suggestion['tipo'].toString().toUpperCase(),
-                          style: const TextStyle(color: _gray400, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              )
-              .toList(),
         ],
       ),
     );
@@ -372,8 +275,7 @@ class _ProductSearchViewState extends State<ProductSearchView> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       constraints: BoxConstraints(
-        maxHeight:
-            MediaQuery.of(context).size.height * 0.6, // Limitar altura máxima
+        maxHeight: MediaQuery.of(context).size.height * 0.6,
       ),
       decoration: BoxDecoration(
         color: _slate900,
@@ -439,14 +341,14 @@ class _ProductSearchViewState extends State<ProductSearchView> {
                 const SizedBox(height: 16),
                 _buildSearchTip(
                   Icons.edit,
-                  'Escribe al menos 2 caracteres',
-                  'Para ver sugerencias automáticas',
+                  'Escribe al menos 3 caracteres',
+                  'Para iniciar la búsqueda automática',
                   Colors.blue,
                 ),
                 _buildSearchTip(
                   Icons.search,
-                  'Presiona Enter o toca una sugerencia',
-                  'Para realizar la búsqueda completa',
+                  'Presiona Enter para buscar inmediatamente',
+                  'O espera medio segundo para búsqueda automática',
                   Colors.green,
                 ),
                 _buildSearchTip(
@@ -590,7 +492,7 @@ class _ProductSearchViewState extends State<ProductSearchView> {
                     Expanded(
                       child: _buildFeatureCard(
                         Icons.flash_on,
-                        'Búsqueda Inteligente',
+                        'Búsqueda Rápida',
                         'Encuentra productos en múltiples campos simultáneamente',
                         Colors.blue,
                       ),
@@ -611,9 +513,9 @@ class _ProductSearchViewState extends State<ProductSearchView> {
                   children: [
                     Expanded(
                       child: _buildFeatureCard(
-                        Icons.auto_awesome,
-                        'Autocompletado',
-                        'Sugerencias inteligentes mientras escribes',
+                        Icons.timer,
+                        'Búsqueda Automática',
+                        'Resultados mientras escribes (3+ caracteres)',
                         Colors.purple,
                       ),
                     ),
@@ -1035,7 +937,8 @@ class _ProductSearchViewState extends State<ProductSearchView> {
     if (_selectedProduct == null) return const SizedBox.shrink();
 
     return Dialog(
-      backgroundColor: _slate900,
+      backgroundColor: _slate950,
+      
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         constraints: const BoxConstraints(maxHeight: 600, maxWidth: 500),
@@ -1046,7 +949,7 @@ class _ProductSearchViewState extends State<ProductSearchView> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: _gray300)),
+                border: Border(bottom: BorderSide(color: Colors.amber)),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1187,45 +1090,11 @@ class _ProductSearchViewState extends State<ProductSearchView> {
     );
   }
 
-  Color _getColorForType(String type) {
-    switch (type) {
-      case 'codigo':
-        return Colors.blue;
-      case 'descripcion':
-        return Colors.green;
-      case 'marca':
-        return Colors.purple;
-      case 'modelo':
-        return Colors.orange;
-      case 'serial':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  IconData _getIconForType(String type) {
-    switch (type) {
-      case 'codigo':
-        return Icons.qr_code_2;
-      case 'descripcion':
-        return Icons.inventory_2;
-      case 'marca':
-        return Icons.business;
-      case 'modelo':
-        return Icons.settings;
-      case 'serial':
-        return Icons.fingerprint;
-      default:
-        return Icons.inventory_2;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Busqueda rapida'),
+        title: const Text('Búsqueda rápida'),
         backgroundColor: _slate950,
         foregroundColor: Colors.white,
       ),
@@ -1251,8 +1120,6 @@ class _ProductSearchViewState extends State<ProductSearchView> {
                 _buildSearchField(),
                 // Loading Indicator
                 if (_isLoading) _buildLoadingIndicator(),
-                // Suggestions
-                _buildSuggestions(),
                 // Content Area
                 Expanded(child: _buildMainContent()),
               ],
@@ -1271,60 +1138,12 @@ class _ProductSearchViewState extends State<ProductSearchView> {
       return const SizedBox.shrink();
     }
 
-    // Si se están mostrando sugerencias, no mostrar contenido adicional
-    if (_showSuggestions && _suggestions.isNotEmpty) {
-      return const SizedBox.shrink();
-    }
-
     // Si hay resultados de búsqueda, mostrarlos
     if (_showResults) {
-      return _buildSearchResultsContent();
+      return _buildSearchResults();
     }
 
     // Si no hay búsqueda activa, mostrar la vista de bienvenida
-    if (_searchController.text.isEmpty) {
-      return _buildWelcomeView();
-    }
-
-    // Si hay texto pero no hay resultados
-    return _buildNoResults();
-  }
-
-  Widget _buildSearchResultsContent() {
-    if (_searchResults.isEmpty && _searchController.text.isNotEmpty) {
-      return _buildNoResults();
-    }
-
-    if (_searchResults.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.6,
-      ),
-      decoration: BoxDecoration(
-        color: _slate900,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (_statistics != null) _buildStatistics(),
-          Flexible(
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: _searchResults.length,
-              itemBuilder: (context, index) =>
-                  _buildResultItem(_searchResults[index]),
-            ),
-          ),
-        ],
-      ),
-    );
+    return _buildWelcomeView();
   }
 }
